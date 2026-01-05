@@ -3,6 +3,7 @@ from langchain.document_loaders.unstructured import UnstructuredAPIFileLoader
 from langchain.document_loaders import UnstructuredURLLoader
 from langchain.document_loaders.git import GitLoader
 from langchain.document_loaders import GoogleDriveLoader
+from langchain.schema import Document
 from utils.config import load_config
 from googleapiclient.errors import HttpError
 
@@ -13,6 +14,9 @@ import shutil
 from urllib.parse import urlparse, unquote
 import tempfile
 import time
+import requests
+import feedparser
+from datetime import datetime
 
 UNSTRUCTURED_KEY=os.getenv('UNSTRUCTURED_KEY')
 
@@ -217,3 +221,209 @@ def read_file_to_document(gs_file: pathlib.Path, split=False, metadata: dict = N
     logging.info(f"gs_file:{gs_file} read into {len(docs)} docs")
 
     return docs
+
+def read_twitter_to_document(twitter_source: str, metadata: dict = None):
+    """
+    Load tweets from Twitter API.
+    Supports:
+    - twitter://user:username - Load user timeline
+    - twitter://hashtag:hashtag - Load tweets with hashtag
+    - twitter://search:query - Search tweets
+    
+    Args:
+        twitter_source: Twitter source string in format twitter://type:value
+        metadata: Optional metadata to add to documents
+    """
+    import tweepy
+    
+    logging.info(f"Reading Twitter source: {twitter_source}")
+    
+    # Parse Twitter source
+    if not twitter_source.startswith("twitter://"):
+        logging.error(f"Invalid Twitter source format: {twitter_source}")
+        return None
+    
+    source_type, source_value = twitter_source.replace("twitter://", "").split(":", 1)
+    
+    # Get Twitter credentials
+    TWITTER_BEARER_TOKEN = os.getenv('TWITTER_BEARER_TOKEN')
+    if not TWITTER_BEARER_TOKEN:
+        logging.error("TWITTER_BEARER_TOKEN not found in environment variables")
+        return None
+    
+    try:
+        # Initialize Twitter API v2 client
+        client = tweepy.Client(bearer_token=TWITTER_BEARER_TOKEN)
+        
+        docs = []
+        tweets = []
+        
+        if source_type == "user":
+            # Get user timeline
+            try:
+                user = client.get_user(username=source_value)
+                if user.data:
+                    tweets_response = client.get_users_tweets(
+                        id=user.data.id,
+                        max_results=100,  # Twitter API v2 limit
+                        tweet_fields=['created_at', 'public_metrics', 'text']
+                    )
+                    if tweets_response.data:
+                        tweets = tweets_response.data
+            except Exception as e:
+                logging.error(f"Error fetching user timeline for {source_value}: {str(e)}")
+                return None
+                
+        elif source_type == "hashtag":
+            # Search tweets by hashtag (remove # if present)
+            hashtag = source_value.lstrip('#')
+            try:
+                tweets_response = client.search_recent_tweets(
+                    query=f"#{hashtag} -is:retweet",
+                    max_results=100,
+                    tweet_fields=['created_at', 'public_metrics', 'text', 'author_id']
+                )
+                if tweets_response.data:
+                    tweets = tweets_response.data
+            except Exception as e:
+                logging.error(f"Error searching hashtag {hashtag}: {str(e)}")
+                return None
+                
+        elif source_type == "search":
+            # Search tweets by query
+            try:
+                tweets_response = client.search_recent_tweets(
+                    query=source_value,
+                    max_results=100,
+                    tweet_fields=['created_at', 'public_metrics', 'text', 'author_id']
+                )
+                if tweets_response.data:
+                    tweets = tweets_response.data
+            except Exception as e:
+                logging.error(f"Error searching query {source_value}: {str(e)}")
+                return None
+        else:
+            logging.error(f"Unknown Twitter source type: {source_type}")
+            return None
+        
+        # Convert tweets to documents
+        for tweet in tweets:
+            tweet_metadata = {
+                "source": twitter_source,
+                "type": "twitter",
+                "twitter_id": str(tweet.id),
+                "created_at": tweet.created_at.isoformat() if hasattr(tweet, 'created_at') and tweet.created_at else None,
+            }
+            
+            if hasattr(tweet, 'public_metrics'):
+                tweet_metadata["retweet_count"] = tweet.public_metrics.get('retweet_count', 0)
+                tweet_metadata["like_count"] = tweet.public_metrics.get('like_count', 0)
+                tweet_metadata["reply_count"] = tweet.public_metrics.get('reply_count', 0)
+            
+            if metadata:
+                tweet_metadata.update(metadata)
+            
+            # Create document from tweet text
+            doc = Document(
+                page_content=tweet.text,
+                metadata=tweet_metadata
+            )
+            docs.append(doc)
+        
+        logging.info(f"TwitterLoader read {len(docs)} tweet(s) from {twitter_source}")
+        return docs
+        
+    except Exception as e:
+        logging.error(f"Error loading Twitter data: {str(e)}")
+        return None
+
+def read_rss_feed_to_document(rss_url: str, metadata: dict = None):
+    """
+    Load content from RSS feed.
+    
+    Args:
+        rss_url: URL of the RSS feed
+        metadata: Optional metadata to add to documents
+    """
+    logging.info(f"Reading RSS feed from {rss_url}")
+    
+    try:
+        # Parse RSS feed
+        feed = feedparser.parse(rss_url)
+        
+        if not feed.entries:
+            logging.warning(f"No entries found in RSS feed: {rss_url}")
+            return None
+        
+        docs = []
+        for entry in feed.entries:
+            # Combine title and summary/content
+            content_parts = []
+            if hasattr(entry, 'title'):
+                content_parts.append(f"Title: {entry.title}")
+            if hasattr(entry, 'summary'):
+                content_parts.append(entry.summary)
+            elif hasattr(entry, 'content'):
+                # Some feeds use content instead of summary
+                if isinstance(entry.content, list) and len(entry.content) > 0:
+                    content_parts.append(entry.content[0].value)
+                else:
+                    content_parts.append(str(entry.content))
+            
+            page_content = "\n\n".join(content_parts)
+            
+            entry_metadata = {
+                "source": rss_url,
+                "type": "rss_feed",
+                "feed_title": feed.feed.get('title', 'Unknown'),
+            }
+            
+            if hasattr(entry, 'link'):
+                entry_metadata["url"] = entry.link
+            if hasattr(entry, 'published'):
+                entry_metadata["published"] = entry.published
+            if hasattr(entry, 'author'):
+                entry_metadata["author"] = entry.author
+            
+            if metadata:
+                entry_metadata.update(metadata)
+            
+            doc = Document(
+                page_content=page_content,
+                metadata=entry_metadata
+            )
+            docs.append(doc)
+        
+        logging.info(f"RSSLoader read {len(docs)} article(s) from {rss_url}")
+        return docs
+        
+    except Exception as e:
+        logging.error(f"Error loading RSS feed {rss_url}: {str(e)}")
+        return None
+
+def read_news_website_to_document(url: str, metadata: dict = None):
+    """
+    Load content from a news website.
+    First tries RSS feed if available, then falls back to web scraping.
+    
+    Args:
+        url: URL of the news website
+        metadata: Optional metadata to add to documents
+    """
+    logging.info(f"Reading news website from {url}")
+    
+    # Try to detect RSS feed
+    config = load_config("config.json")
+    news_sources = config.get("news_sources", [])
+    
+    # Check if URL matches a configured news source with RSS
+    for source in news_sources:
+        if source.get("url") == url or url.startswith(source.get("url", "")):
+            rss_url = source.get("rss")
+            if rss_url:
+                logging.info(f"Found RSS feed for {url}: {rss_url}")
+                return read_rss_feed_to_document(rss_url, metadata)
+    
+    # Fall back to regular URL loader
+    logging.info(f"Falling back to UnstructuredURLLoader for {url}")
+    return read_url_to_document(url, metadata)

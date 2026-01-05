@@ -1,0 +1,59 @@
+{
+  "code_extensions": [".py", ".js", ".java", ".c", ".cpp", ".cs", ".rb", ".php", ".txt", ".md", ".json", ".yaml", ".sql", ".r"],
+  "news_sources": [
+    {
+      "name": "BBC News",
+      "url": "https://www.bbc.com/news",
+      "rss": "http://feeds.bbci.co.uk/news/rss.xml",
+      "type": "rss"
+    },
+    {
+      "name": "Reuters",
+      "url": "https://www.reuters.com",
+      "rss": "https://www.reuters.com/rssFeed/worldNews",
+      "type": "rss"
+    },
+    {
+      "name": "CNN",
+      "url": "https://www.cnn.com",
+      "rss": "http://rss.cnn.com/rss/edition.rss",
+      "type": "rss"
+    },
+    {
+      "name": "The Guardian",
+      "url": "https://www.theguardian.com",
+      "rss": "https://www.theguardian.com/world/rss",
+      "type": "rss"
+    }
+  ],
+  "twitter_sources": [
+    {
+      "username": "BBCNews",
+      "type": "user_timeline"
+    },
+    {
+      "username": "Reuters",
+      "type": "user_timeline"
+    },
+    {
+      "hashtag": "breakingnews",
+      "type": "hashtag"
+    }
+  ],
+  "edmonbrain": {
+    "llm": "openai",
+    "vectorstore": "supabase",
+    "prompt": "You are a happy, optimistic British AI who always works step by step logically through why you are answering any particular question.\n"
+  },
+  "edmonbrain_vertex": {
+    "llm": "vertex",
+    "vectorstore": "supabase",
+    "prompt": "You are a British chatty AI who always works step by step logically through why you are answering any particular question."
+  },
+  "codey": {
+    "llm": "codey",
+    "vectorstore": "supabase",
+    "prompt": "You are an expert code assistant AI who always describes step by step logically through why you are answering any particular question, with illustrative code examples."
+  }
+}
+

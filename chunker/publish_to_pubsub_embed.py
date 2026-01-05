@@ -339,20 +339,49 @@ def data_to_embed_pubsub(data: dict, vector_name: str, batch=False):
                 docs.extend(doc)
 
         chunks = chunk_doc_to_docs(docs)
+    
+    elif message_data.startswith("twitter://"):
+        logging.info("Got Twitter source")
+        metadata["source"] = message_data
+        metadata["type"] = "twitter_load"
+        docs = loaders.read_twitter_to_document(message_data, metadata=metadata)
+        if docs is None:
+            logging.warning("Could not load Twitter data")
+            chunks = []
+        else:
+            chunks = chunk_doc_to_docs(docs)
+    
+    elif message_data.endswith(".rss") or message_data.endswith("/rss") or "rss" in message_data.lower() or message_data.startswith("http://feeds.") or message_data.startswith("https://feeds."):
+        logging.info("Got RSS feed URL")
+        metadata["source"] = message_data
+        metadata["type"] = "rss_load"
+        docs = loaders.read_rss_feed_to_document(message_data, metadata=metadata)
+        if docs is None:
+            logging.warning("Could not load RSS feed")
+            chunks = []
+        else:
+            chunks = chunk_doc_to_docs(docs)
         
     elif message_data.startswith("http"):
         logging.info(f"Got http message: {message_data}")
 
-        # just in case, extract the URL again
-        urls = extract_urls(message_data)
-
+        # Check if it's a news website (try RSS first, then fallback to web scraping)
         docs = []
+        urls = extract_urls(message_data)
+        
         for url in urls:
             metadata["source"] = url
             metadata["url"] = url
             metadata["type"] = "url_load"
-            doc = loaders.read_url_to_document(url, metadata=metadata)
-            docs.extend(doc)
+            
+            # Try news website loader first (which checks for RSS)
+            doc = loaders.read_news_website_to_document(url, metadata=metadata)
+            if doc is None:
+                # Fallback to regular URL loader
+                doc = loaders.read_url_to_document(url, metadata=metadata)
+            
+            if doc:
+                docs.extend(doc)
 
         chunks = chunk_doc_to_docs(docs)
 

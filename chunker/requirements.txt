@@ -26,3 +26,6 @@ pgvector
 flask_testing
 pypdf
 google-cloud-batch
+tweepy>=4.14.0
+feedparser>=6.0.10
+beautifulsoup4>=4.12.0

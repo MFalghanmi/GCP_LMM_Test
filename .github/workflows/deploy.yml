@@ -1,0 +1,74 @@
+name: Deploy to GCP
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+
+env:
+  PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+  REGION: ${{ secrets.GCP_REGION }}
+  GCS_BUCKET: ${{ secrets.GCS_BUCKET }}
+  SERVICE_ACCOUNT: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v1
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v1
+
+      - name: Configure Docker for GCR
+        run: gcloud auth configure-docker
+
+      - name: Deploy Prebuild
+        run: |
+          cd prebuild
+          gcloud builds submit --config=cloudbuild_prebuild.yaml \
+            --substitutions=_IMAGE_NAME=edmonbrain,_GCS_BUCKET=${{ secrets.GCS_BUCKET }}
+
+      - name: Deploy Unstructured Service
+        run: |
+          cd unstructured
+          gcloud builds submit --config=cloudbuild_unstructured.yaml \
+            --substitutions=_REGION=${{ secrets.GCP_REGION }},_SERVICE_ACCOUNT=${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Deploy Chunker Service
+        run: |
+          cd chunker
+          gcloud builds submit --config=cloudbuild_cloudrun_chunker.yaml \
+            --substitutions=_IMAGE_NAME=edmonbrain,_SERVICE_NAME=edmonbrain-chunker,_REGION=${{ secrets.GCP_REGION }},_GCS_BUCKET=${{ secrets.GCS_BUCKET }},_SERVICE_ACCOUNT=${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Deploy Embedder Service
+        run: |
+          cd embedder
+          gcloud builds submit --config=cloudbuild_cloudrun_embedder.yaml \
+            --substitutions=_IMAGE_NAME=edmonbrain,_SERVICE_NAME=edmonbrain-embedder,_REGION=${{ secrets.GCP_REGION }},_GCS_BUCKET=${{ secrets.GCS_BUCKET }},_SERVICE_ACCOUNT=${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Deploy QNA Service
+        run: |
+          cd qna
+          gcloud builds submit --config=cloudbuild_cloudrun_qa.yaml \
+            --substitutions=_IMAGE_NAME=edmonbrain,_SERVICE_NAME=edmonbrain-qna,_REGION=${{ secrets.GCP_REGION }},_GCS_BUCKET=${{ secrets.GCS_BUCKET }},_SERVICE_ACCOUNT=${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Deploy Webapp
+        run: |
+          cd webapp
+          gcloud builds submit --config=cloudbuild_cloudrun.yaml \
+            --substitutions=_IMAGE_NAME=edmonbrain,_SERVICE_NAME=edmonbrain-webapp,_REGION=${{ secrets.GCP_REGION }},_GCS_BUCKET=${{ secrets.GCS_BUCKET }},_SERVICE_ACCOUNT=${{ secrets.GCP_SERVICE_ACCOUNT }}
+
